@@ -3,10 +3,10 @@
 services:
   converter:
     build:
-      context: ..
-      dockerfile: pdfConverter/Dockerfile
-    image: pdfConverter:latest
-    container_name: pdfConverter
+      context: .
+      dockerfile: Dockerfile
+    image: pdf-converter:latest
+    container_name: pdf-converter
     ports:
       - "8000:8000"
     environment:

@@ -3,7 +3,7 @@
 # Excel / HTML 转 PDF 服务 —— 单镜像全量运行环境
 #
 # 构建（构建上下文必须是项目根目录，以便只读复用既有内核 excel2pdf.py）：
-#   docker build -f pdfConverter/Dockerfile -t pdfConverter:latest .
+#   docker build -f pdf-converter/Dockerfile -t pdf-converter:latest .
 #
 # 运行：
 #   docker run -d --name converter \
@@ -11,7 +11,7 @@
 #     -e API_KEYS=your-secret-key \
 #     -v converter-data:/data \
 #     --memory=4g --cpus=2 \
-#     pdfConverter:latest
+#     pdf-converter:latest
 #
 # 验证：
 #   curl http://localhost:8000/healthz
@@ -74,7 +74,7 @@ RUN fc-cache -f -v >/dev/null 2>&1 || fc-cache -f
 # 2. Python 依赖与 Chromium
 # ---------------------------------------------------------------------------
 WORKDIR /build
-COPY pdfConverter/requirements.txt ./requirements.txt
+COPY pdf-converter/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -i "${PIP_INDEX_URL}" -r requirements.txt \
     && if [ -n "${PLAYWRIGHT_DOWNLOAD_HOST}" ]; then \
          export PLAYWRIGHT_DOWNLOAD_HOST="${PLAYWRIGHT_DOWNLOAD_HOST}"; \
@@ -87,7 +87,7 @@ RUN pip install --no-cache-dir -i "${PIP_INDEX_URL}" -r requirements.txt \
 # 3. 应用代码与只读转换内核
 # ---------------------------------------------------------------------------
 WORKDIR /app
-COPY pdfConverter/app ./app
+COPY pdf-converter/app ./app
 # 既有内核以只读方式复用，不修改源文件
 COPY excel2pdf.py /opt/excel2pdf/excel2pdf.py
 

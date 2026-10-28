@@ -1,4 +1,4 @@
-# pdfConverter
+# pdf-converter
 
 Excel / HTML 转 PDF 服务。基于 FastAPI + LibreOffice + 无头 Chromium，以 Docker 镜像交付，运行即对外提供 HTTP 接口。
 
@@ -14,10 +14,10 @@ Excel / HTML 转 PDF 服务。基于 FastAPI + LibreOffice + 无头 Chromium，�
 
 ### 1. 构建镜像
 
-**构建上下文必须是项目根目录**（`pdfConverter` 的上一级），因为镜像需要 COPY 复用的转换内核 `excel2pdf.py`。
+**构建上下文必须是项目根目录**（`pdf-converter` 的上一级），因为镜像需要 COPY 复用的转换内核 `excel2pdf.py`。
 
 ```bash
-docker build -f pdfConverter/Dockerfile -t pdfConverter:latest .
+cd pdfConverter && docker build -f Dockerfile -t pdf-converter:latest .
 ```
 
 ### 2. 运行容器
@@ -30,7 +30,7 @@ docker run -d --name converter \
   --shm-size=256m \
   --memory=4g --cpus=2 \
   --restart unless-stopped \
-  pdfConverter:latest
+  pdf-converter:latest
 ```
 
 启动后：
@@ -42,7 +42,7 @@ docker run -d --name converter \
 ### 3. 使用 docker-compose（可选）
 
 ```bash
-API_KEYS=your-secret-key docker compose -f pdfConverter/docker-compose.yml up -d --build
+API_KEYS=your-secret-key docker compose -f pdf-converter/docker-compose.yml up -d --build
 ```
 
 ### 4. 构建加速（可选，国内网络）
@@ -58,7 +58,7 @@ Dockerfile 提供以下构建参数（`--build-arg`）：
 示例：
 
 ```bash
-docker build -f pdfConverter/Dockerfile -t pdfConverter:latest \
+docker build -f pdf-converter/Dockerfile -t pdf-converter:latest \
   --build-arg APT_MIRROR=mirrors.aliyun.com .
 ```
 
@@ -412,5 +412,5 @@ curl -s "$BASE/api/v1/jobs/$JOB/download" -H "X-API-Key: $KEY" -o result.pdf
 
 ```bash
 BASE=http://localhost:8000 API_KEY=your-secret-key SAMPLE_XLSX=test1.xlsx \
-  bash pdfConverter/tests/smoke.sh
+  bash pdf-converter/tests/smoke.sh
 ```
