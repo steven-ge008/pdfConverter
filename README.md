@@ -42,7 +42,7 @@ docker run -d --name converter \
 ### 3. 使用 docker-compose（可选）
 
 ```bash
-API_KEYS=your-secret-key docker compose -f pdf-converter/docker-compose.yml up -d --build
+cd pdfConverter && API_KEYS=your-secret-key docker compose -f docker-compose.yml up -d --build
 ```
 
 ### 4. 构建加速（可选，国内网络）
@@ -58,7 +58,7 @@ Dockerfile 提供以下构建参数（`--build-arg`）：
 示例：
 
 ```bash
-docker build -f pdf-converter/Dockerfile -t pdf-converter:latest \
+docker build -f Dockerfile -t pdf-converter:latest \
   --build-arg APT_MIRROR=mirrors.aliyun.com .
 ```
 
