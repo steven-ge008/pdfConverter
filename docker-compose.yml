@@ -1,5 +1,5 @@
-# 部署示例。docker-compose 非必需，单条 docker run 即可运行。
-# 注意：build.context 必须是项目根目录（Dockerfile 的上一级）。
+# 在 pdf-converter 目录执行：
+#   API_KEYS=your-secret-key docker compose -f docker-compose.yml up -d --build
 services:
   converter:
     build:

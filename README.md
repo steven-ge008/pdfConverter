@@ -14,10 +14,11 @@ Excel / HTML 转 PDF 服务。基于 FastAPI + LibreOffice + 无头 Chromium，�
 
 ### 1. 构建镜像
 
-**构建上下文必须是项目根目录**（`pdf-converter` 的上一级），因为镜像需要 COPY 复用的转换内核 `excel2pdf.py`。
+在 `pdf-converter` 目录执行，构建上下文为当前目录；转换内核 `excel2pdf.py` 已包含在该目录中。
 
 ```bash
-cd pdfConverter && docker build -f Dockerfile -t pdf-converter:latest .
+cd pdf-converter
+docker build -t pdf-converter:latest .
 ```
 
 ### 2. 运行容器
@@ -42,7 +43,8 @@ docker run -d --name converter \
 ### 3. 使用 docker-compose（可选）
 
 ```bash
-cd pdfConverter && API_KEYS=your-secret-key docker compose -f docker-compose.yml up -d --build
+cd pdf-converter
+API_KEYS=your-secret-key docker compose -f docker-compose.yml up -d --build
 ```
 
 ### 4. 构建加速（可选，国内网络）
@@ -412,5 +414,5 @@ curl -s "$BASE/api/v1/jobs/$JOB/download" -H "X-API-Key: $KEY" -o result.pdf
 
 ```bash
 BASE=http://localhost:8000 API_KEY=your-secret-key SAMPLE_XLSX=test1.xlsx \
-  bash pdf-converter/tests/smoke.sh
+  bash tests/smoke.sh
 ```
