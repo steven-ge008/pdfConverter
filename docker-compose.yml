@@ -1,0 +1,33 @@
+# 部署示例。docker-compose 非必需，单条 docker run 即可运行。
+# 注意：build.context 必须是项目根目录（Dockerfile 的上一级）。
+services:
+  converter:
+    build:
+      context: ..
+      dockerfile: converter-service/Dockerfile
+    image: converter-service:latest
+    container_name: converter-service
+    ports:
+      - "8000:8000"
+    environment:
+      # 逗号分隔可配多个 Key；留空则关闭鉴权（仅限受信内网）
+      API_KEYS: ${API_KEYS:-change-me}
+      EXCEL_WORKERS: "2"
+      HTML_WORKERS: "2"
+      EXCEL_TIMEOUT: "180"
+      HTML_TIMEOUT: "90"
+      JOB_TTL: "86400"
+      CJK_FONT: "Noto Sans CJK SC"
+    volumes:
+      # 必须挂载：任务元数据与结果 PDF，容器重建后仍保留
+      - converter-data:/data
+    # Chromium 渲染内存占用较高，限制容器资源防 OOM
+    mem_limit: 4g
+    cpus: 2
+    # /dev/shm 默认 64MB 易导致 Chromium 崩溃，虽已加 --disable-dev-shm-usage，
+    # 仍建议适当放大以获得更稳定的渲染表现
+    shm_size: "256m"
+    restart: unless-stopped
+
+volumes:
+  converter-data:
