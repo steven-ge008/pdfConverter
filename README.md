@@ -1,8 +1,10 @@
 # pdf-converter
 
-Excel / HTML 转 PDF 服务。基于 FastAPI + LibreOffice + 无头 Chromium，以 Docker 镜像交付，运行即对外提供 HTTP 接口。
+Excel / Word / 图片 / HTML 转 PDF 服务。基于 FastAPI + LibreOffice + Pillow + 无头 Chromium，以 Docker 镜像交付，运行即对外提供 HTTP 接口。
 
 - **Excel 转 PDF**：上传本地 `.xlsx` / `.xlsm`，或提供 Excel 网络地址
+- **Word 转 PDF**：上传本地 `.docx` / `.doc`，或提供 Word 网络地址
+- **图片转 PDF**：上传本地 JPG/JPEG、PNG、WebP，或提供图片网络地址
 - **HTML 转 PDF**：提供网页 URL（执行 JavaScript 渲染），或直接提交 HTML 源码
 - **两种获取结果方式**：`sync=true` 直接返回 PDF 文件流；默认异步返回 `job_id`，轮询后下载
 - **安全**：API Key 鉴权、SSRF 防护（含 Chromium 子请求拦截）、上传/下载限长
@@ -78,8 +80,12 @@ docker build -f Dockerfile -t pdf-converter:latest \
 | `DATA_DIR` | `/data` | 任务元数据与结果 PDF 存放目录，**生产环境必须挂载 volume 持久化** |
 | `EXCEL_TIMEOUT` | `180` | Excel 转换超时（秒），超时强杀 LibreOffice 进程组 |
 | `HTML_TIMEOUT` | `90` | HTML 渲染超时（秒） |
+| `WORD_TIMEOUT` | `180` | Word 转换超时（秒），超时强杀 LibreOffice 进程组 |
+| `IMAGE_TIMEOUT` | `30` | 图片转换超时（秒） |
 | `EXCEL_WORKERS` | `2` | Excel 并发转换上限（LibreOffice CPU 密集，不宜过大） |
 | `HTML_WORKERS` | `2` | HTML 并发渲染上限（Chromium 内存密集） |
+| `WORD_WORKERS` | `2` | Word 并发转换上限，使用独立队列与 worker 池 |
+| `IMAGE_WORKERS` | `2` | 图片并发转换上限，使用独立队列与 worker 池 |
 | `DOWNLOAD_TIMEOUT` | `60` | URL 下载超时（秒） |
 | `MAX_DOWNLOAD_BYTES` | `52428800`（50MB） | URL 下载大小上限（字节） |
 | `MAX_REDIRECTS` | `3` | URL 下载允许的重定向跳数，每跳重新做 SSRF 校验 |
@@ -113,13 +119,13 @@ docker build -f Dockerfile -t pdf-converter:latest \
 | --- | --- | --- | --- |
 | `/healthz` | GET | 存活探针 | 否 |
 | `/readyz` | GET | 就绪探针（检查 soffice / Chromium / 数据目录） | 否 |
-| `/api/v1/convert/excel` | POST | Excel 转 PDF（multipart 上传或表单 url） | 是 |
-| `/api/v1/convert/html` | POST | HTML 转 PDF（JSON：url 或 html 源码） | 是 |
+| `/api/v1/convert` | POST | 统一转换入口，由 `sourceType` 指定 Excel / Word / 图片 / HTML | 是 |
 | `/api/v1/jobs/{job_id}` | GET | 查询异步任务状态 | 是 |
 | `/api/v1/jobs/{job_id}/download` | GET | 下载任务结果 PDF | 是 |
 
 转换接口通用规则：
 
+- 请求统一使用 `multipart/form-data`，`sourceType` 必填
 - `sync=true`：同步等待转换完成，直接返回 PDF 文件流（`Content-Type: application/pdf`）
 - `sync=false`（默认）：立即返回 `job_id`，通过轮询 + 下载获取结果
 
@@ -127,14 +133,15 @@ docker build -f Dockerfile -t pdf-converter:latest \
 
 ## 五、接口详情
 
-### 5.1 Excel 转 PDF — `POST /api/v1/convert/excel`
+### 5.1 统一转换 — `POST /api/v1/convert`
 
-请求为 `multipart/form-data`。
+请求统一为 `multipart/form-data`。`sourceType=excel` 时使用以下字段。
 
 **Request 字段**
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
+| `sourceType` | string | 是 | - | 源文件类型：`excel` / `word` / `image` / `html` |
 | `file` | File | 与 `url` 二选一 | - | 上传的 Excel 文件，仅支持 `.xlsx` / `.xlsm` |
 | `url` | string | 与 `file` 二选一 | - | Excel 文件网络地址，仅 http/https，SSRF 校验 |
 | `sync` | boolean | 否 | `false` | `true` 直接返回 PDF 文件流；`false` 返回 `job_id` 走异步 |
@@ -170,8 +177,9 @@ docker build -f Dockerfile -t pdf-converter:latest \
 异步（上传文件）：
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/convert/excel \
+curl -X POST http://localhost:8000/api/v1/convert \
   -H 'X-API-Key: your-secret-key' \
+  -F 'sourceType=excel' \
   -F 'file=@/path/to/test1.xlsx'
 ```
 
@@ -186,8 +194,9 @@ curl -X POST http://localhost:8000/api/v1/convert/excel \
 同步（网络地址 + 自定义分页）：
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/convert/excel \
+curl -X POST http://localhost:8000/api/v1/convert \
   -H 'X-API-Key: your-secret-key' \
+  -F 'sourceType=excel' \
   -F 'url=https://example.com/files/order.xlsx' \
   -F 'sync=true' \
   -F 'page_config={"合同":{"fit_width":1,"fit_height":0,"margins":{"right":0.96}}}' \
@@ -198,14 +207,109 @@ curl -X POST http://localhost:8000/api/v1/convert/excel \
 
 ---
 
-### 5.2 HTML 转 PDF — `POST /api/v1/convert/html`
+### 5.2 Word 请求
 
-请求为 `application/json`。
+`sourceType=word`，通过 LibreOffice Writer 转换，仍调用 `POST /api/v1/convert`。
 
 **Request 字段**
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
+| `sourceType` | string | 是 | - | 固定为 `word` |
+| `file` | File | 与 `url` 二选一 | - | 上传的 Word 文件，支持 `.docx` / `.doc` |
+| `url` | string | 与 `file` 二选一 | - | Word 文件网络地址，URL 路径须以 `.docx` 或 `.doc` 结尾，仅 http/https，SSRF 校验 |
+| `sync` | boolean | 否 | `false` | `true` 直接返回 PDF 文件流；`false` 返回 `job_id` 走异步 |
+
+**Response 字段**：与统一接口一致（异步返回 `job_id` / `status` / `poll_url`；同步返回 PDF 流）。
+
+**Request / Response Demo**
+
+同步上传：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/convert \
+  -H 'X-API-Key: your-secret-key' \
+  -F 'sourceType=word' \
+  -F 'file=@/path/to/document.docx' \
+  -F 'sync=true' \
+  -o result.pdf
+```
+
+异步提交网络地址：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/convert \
+  -H 'X-API-Key: your-secret-key' \
+  -F 'sourceType=word' \
+  -F 'url=https://example.com/files/document.doc'
+```
+
+```json
+{
+  "job_id": "4f8c2a1b3d4e5f6a7b8c9d0e1f2a3b4c",
+  "status": "pending",
+  "poll_url": "/api/v1/jobs/4f8c2a1b3d4e5f6a7b8c9d0e1f2a3b4c"
+}
+```
+
+---
+
+### 5.3 图片请求
+
+`sourceType=image`，每个任务转换一张图片。输出单页 A4 PDF，根据图片方向自动选择横向或纵向，保持宽高比缩放居中，不裁剪；透明区域使用白色背景，EXIF 方向自动校正。
+
+**Request 字段**
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- |
+| `sourceType` | string | 是 | - | 固定为 `image` |
+| `file` | File | 与 `url` 二选一 | - | 上传图片，支持 `.jpg` / `.jpeg` / `.png` / `.webp`，同时校验真实图片格式 |
+| `url` | string | 与 `file` 二选一 | - | 图片网络地址，URL 路径须以支持的扩展名结尾，仅 http/https，SSRF 校验 |
+| `sync` | boolean | 否 | `false` | `true` 直接返回 PDF 文件流；`false` 返回 `job_id` 走异步 |
+
+**Response 字段**：与统一接口一致（异步返回 `job_id` / `status` / `poll_url`；同步返回 PDF 流）。
+
+**Request / Response Demo**
+
+同步上传：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/convert \
+  -H 'X-API-Key: your-secret-key' \
+  -F 'sourceType=image' \
+  -F 'file=@/path/to/photo.jpg' \
+  -F 'sync=true' \
+  -o result.pdf
+```
+
+异步提交网络地址：
+
+```bash
+curl -X POST http://localhost:8000/api/v1/convert \
+  -H 'X-API-Key: your-secret-key' \
+  -F 'sourceType=image' \
+  -F 'url=https://example.com/images/photo.webp'
+```
+
+```json
+{
+  "job_id": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+  "status": "pending",
+  "poll_url": "/api/v1/jobs/1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+}
+```
+
+---
+
+### 5.4 HTML 请求
+
+`sourceType=html`，同样使用 `multipart/form-data`。HTML 不支持文件上传，`url` 与 `html` 必须二选一。
+
+**Request 字段**
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- |
+| `sourceType` | string | 是 | - | 固定为 `html` |
 | `url` | string | 与 `html` 二选一 | - | 待渲染网页地址，仅 http/https；执行 JavaScript，子请求同样做 SSRF 拦截 |
 | `html` | string | 与 `url` 二选一 | - | HTML 源码字符串，直接渲染 |
 | `sync` | boolean | 否 | `false` | `true` 直接返回 PDF 文件流；`false` 返回 `job_id` 走异步 |
@@ -213,27 +317,31 @@ curl -X POST http://localhost:8000/api/v1/convert/excel \
 | `landscape` | boolean | 否 | `false` | 是否横向 |
 | `print_background` | boolean | 否 | `true` | 是否打印背景色与背景图 |
 
-**Response 字段**：与 Excel 接口一致（异步返回 `job_id` / `status` / `poll_url`；同步返回 PDF 流）。
+**Response 字段**：与统一接口一致（异步返回 `job_id` / `status` / `poll_url`；同步返回 PDF 流）。
 
 **Request / Response Demo**
 
 同步（HTML 源码）：
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/convert/html \
+curl -X POST http://localhost:8000/api/v1/convert \
   -H 'X-API-Key: your-secret-key' \
-  -H 'Content-Type: application/json' \
-  -d '{"html":"<html><body><h1>中文渲染测试</h1><p>Hello PDF</p></body></html>","sync":true}' \
+  -F 'sourceType=html' \
+  --form-string 'html=<html><body><h1>中文渲染测试</h1><p>Hello PDF</p></body></html>' \
+  -F 'sync=true' \
   -o result.pdf
 ```
 
 异步（网页 URL，横向 A4）：
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/convert/html \
+curl -X POST http://localhost:8000/api/v1/convert \
   -H 'X-API-Key: your-secret-key' \
-  -H 'Content-Type: application/json' \
-  -d '{"url":"https://example.com","format":"A4","landscape":true,"print_background":true}'
+  -F 'sourceType=html' \
+  -F 'url=https://example.com' \
+  -F 'format=A4' \
+  -F 'landscape=true' \
+  -F 'print_background=true'
 ```
 
 ```json
@@ -246,7 +354,7 @@ curl -X POST http://localhost:8000/api/v1/convert/html \
 
 ---
 
-### 5.3 查询任务 — `GET /api/v1/jobs/{job_id}`
+### 5.5 查询任务 — `GET /api/v1/jobs/{job_id}`
 
 **路径参数**
 
@@ -259,7 +367,7 @@ curl -X POST http://localhost:8000/api/v1/convert/html \
 | 字段 | 类型 | 出现条件 | 说明 |
 | --- | --- | --- | --- |
 | `job_id` | string | 总是 | 任务 ID |
-| `kind` | string | 总是 | 任务类型：`excel` 或 `html` |
+| `kind` | string | 总是 | 任务类型：`excel`、`word`、`image` 或 `html` |
 | `status` | string | 总是 | 任务状态，见下方枚举 |
 | `created_at` | number | 总是 | 创建时间（Unix 时间戳，秒） |
 | `updated_at` | number | 总是 | 最近状态更新时间（Unix 时间戳，秒） |
@@ -319,7 +427,7 @@ curl -X POST http://localhost:8000/api/v1/convert/html \
 
 ---
 
-### 5.4 下载结果 — `GET /api/v1/jobs/{job_id}/download`
+### 5.6 下载结果 — `GET /api/v1/jobs/{job_id}/download`
 
 任务 `status=done` 后可下载，返回 PDF 文件流。
 
@@ -336,7 +444,7 @@ curl -H 'X-API-Key: your-secret-key' \
 
 ---
 
-### 5.5 探针
+### 5.7 探针
 
 ```bash
 curl http://localhost:8000/healthz
@@ -364,8 +472,8 @@ KEY=your-secret-key
 BASE=http://localhost:8000
 
 # 1. 提交任务，取 job_id
-JOB=$(curl -s -X POST "$BASE/api/v1/convert/excel" \
-  -H "X-API-Key: $KEY" -F 'file=@test1.xlsx' | python3 -c 'import sys,json;print(json.load(sys.stdin)["job_id"])')
+JOB=$(curl -s -X POST "$BASE/api/v1/convert" \
+  -H "X-API-Key: $KEY" -F 'sourceType=excel' -F 'file=@test1.xlsx' | python3 -c 'import sys,json;print(json.load(sys.stdin)["job_id"])')
 
 # 2. 轮询直到 done / failed
 while true; do
@@ -386,7 +494,7 @@ curl -s "$BASE/api/v1/jobs/$JOB/download" -H "X-API-Key: $KEY" -o result.pdf
 
 | HTTP 状态码 | 场景 |
 | --- | --- |
-| `400` | 参数错误（file/url 未提供或同时提供、文件格式不符、空文件、page_config 非法 JSON）；Excel URL 下载失败或 SSRF 拦截 |
+| `400` | 参数错误（sourceType 缺失或非法、输入未提供或同时提供、文件扩展名与 sourceType 不符、空文件、page_config 非法 JSON）；Excel/Word/图片 URL 下载失败或 SSRF 拦截 |
 | `401` | API Key 缺失或错误 |
 | `404` | 任务不存在或已过期清理 |
 | `409` | 任务尚未完成就请求下载 |
@@ -410,9 +518,10 @@ curl -s "$BASE/api/v1/jobs/$JOB/download" -H "X-API-Key: $KEY" -o result.pdf
 
 ## 九、验证
 
-镜像构建并启动后，可运行冒烟测试（15 项：探针、鉴权、SSRF 负向、HTML/Excel 同步、Excel 异步全流程）：
+镜像构建并启动后，可运行冒烟测试（探针、鉴权、SSRF 负向、统一入口参数校验、HTML/Excel/Word/图片同步与异步全流程；提供全部样本时共 25 项）：
 
 ```bash
-BASE=http://localhost:8000 API_KEY=your-secret-key SAMPLE_XLSX=test1.xlsx \
+BASE=http://localhost:8000 API_KEY=your-secret-key \
+  SAMPLE_XLSX=test1.xlsx SAMPLE_DOCX=test1.docx SAMPLE_IMAGE=test1.png \
   bash tests/smoke.sh
 ```

@@ -47,7 +47,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PORT=8000
 
 # ---------------------------------------------------------------------------
-# 1. 系统依赖：LibreOffice(仅 Calc) + poppler + 中文字体 + Chromium 运行库
+# 1. 系统依赖：LibreOffice(Calc + Writer) + poppler + 中文字体 + Chromium 运行库
 #    --no-install-recommends 控制体积；同一层内清理 apt 缓存
 # ---------------------------------------------------------------------------
 # bookworm 使用 deb822 格式源文件；替换为镜像站后再更新
@@ -56,6 +56,7 @@ RUN sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR
     && apt-get update && apt-get install -y --no-install-recommends \
         libreoffice-calc \
         libreoffice-core \
+        libreoffice-writer \
         poppler-utils \
         fonts-noto-cjk \
         fontconfig \

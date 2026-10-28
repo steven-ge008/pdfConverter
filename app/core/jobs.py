@@ -1,7 +1,7 @@
 """进程内异步任务队列 + worker 池。
 
 单镜像部署不依赖外部 Redis/MQ：队列驻内存，状态由 SQLite 持久化。
-Excel 与 HTML 各自独立信号量限流，避免一类任务拖垮另一类。
+各转换类型独立信号量限流，避免一类任务拖垮另一类。
 """
 import asyncio
 import shutil
@@ -12,13 +12,17 @@ from ..db import init_store
 from .downloader import DownloadError, download_to_file
 from .excel_converter import ConversionError, convert_excel
 from .html_converter import HtmlConversionError, convert_html
+from .image_converter import ImageConversionError, convert_image
 from .settings import settings
 from .ssrf import SSRFError
+from .word_converter import WordConversionError, convert_word
 
 _queues = {}
 _workers = []
 _excel_sem = None
 _html_sem = None
+_word_sem = None
+_image_sem = None
 
 # 每类任务独占队列与 worker 池：running 状态数即真实转换数，
 # 且一类任务不会阻塞另一类。信号量用于给同步请求（绕过队列）施加同样的
@@ -26,7 +30,12 @@ _html_sem = None
 
 
 def _worker_count(kind: str) -> int:
-    return settings.EXCEL_WORKERS if kind == 'excel' else settings.HTML_WORKERS
+    return {
+        'excel': settings.EXCEL_WORKERS,
+        'html': settings.HTML_WORKERS,
+        'word': settings.WORD_WORKERS,
+        'image': settings.IMAGE_WORKERS,
+    }[kind]
 
 
 def _store():
@@ -43,13 +52,15 @@ def result_path(job_id: str) -> Path:
 
 
 async def startup() -> None:
-    global _workers, _excel_sem, _html_sem
+    global _workers, _excel_sem, _html_sem, _word_sem, _image_sem
     settings.ensure_dirs()
     init_store()
     _store().mark_orphans_failed()
     _excel_sem = asyncio.Semaphore(settings.EXCEL_WORKERS)
     _html_sem = asyncio.Semaphore(settings.HTML_WORKERS)
-    for kind in ('excel', 'html'):
+    _word_sem = asyncio.Semaphore(settings.WORD_WORKERS)
+    _image_sem = asyncio.Semaphore(settings.IMAGE_WORKERS)
+    for kind in ('excel', 'html', 'word', 'image'):
         _queues[kind] = asyncio.Queue()
         for i in range(_worker_count(kind)):
             _workers.append(asyncio.create_task(_worker(kind, i)))
@@ -97,7 +108,8 @@ async def _worker(kind: str, idx: int) -> None:
             _store().update(job_id, status='running')
             try:
                 result = await _execute(job_id, job['kind'], job['payload'])
-            except (ConversionError, HtmlConversionError, DownloadError, SSRFError) as exc:
+            except (ConversionError, HtmlConversionError, WordConversionError,
+                    ImageConversionError, DownloadError, SSRFError) as exc:
                 _store().update(job_id, status='failed', error=str(exc))
             except asyncio.CancelledError:
                 raise
@@ -132,6 +144,14 @@ async def _execute(job_id: str, kind: str, payload: dict) -> dict:
                     landscape=bool(payload.get('landscape', False)),
                     print_background=bool(payload.get('print_background', True)),
                 )
+        elif kind == 'word':
+            src = await _resolve_word_input(job_id, payload)
+            async with _word_sem:
+                result = await convert_word(src, workdir)
+        elif kind == 'image':
+            src = await _resolve_image_input(job_id, payload)
+            async with _image_sem:
+                result = await convert_image(src, workdir)
         else:
             raise ConversionError(f'未知任务类型: {kind}')
 
@@ -150,6 +170,28 @@ async def _resolve_excel_input(job_id: str, payload: dict) -> Path:
     if not url:
         raise ConversionError('缺少输入：既无上传文件也无 url')
     dest = job_dir(job_id) / 'input.xlsx'
+    await download_to_file(url, dest)
+    return dest
+
+
+async def _resolve_word_input(job_id: str, payload: dict) -> Path:
+    if payload.get('source') == 'upload':
+        return Path(payload['path'])
+    url = payload.get('url')
+    if not url:
+        raise WordConversionError('缺少输入：既无上传文件也无 url')
+    dest = job_dir(job_id) / f"input{payload['extension']}"
+    await download_to_file(url, dest)
+    return dest
+
+
+async def _resolve_image_input(job_id: str, payload: dict) -> Path:
+    if payload.get('source') == 'upload':
+        return Path(payload['path'])
+    url = payload.get('url')
+    if not url:
+        raise ImageConversionError('缺少输入：既无上传文件也无 url')
+    dest = job_dir(job_id) / f"input{payload['extension']}"
     await download_to_file(url, dest)
     return dest
 

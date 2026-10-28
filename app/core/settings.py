@@ -24,10 +24,14 @@ class Settings:
     # 转换超时（秒）
     EXCEL_TIMEOUT: int = _int('EXCEL_TIMEOUT', 180)
     HTML_TIMEOUT: int = _int('HTML_TIMEOUT', 90)
+    WORD_TIMEOUT: int = _int('WORD_TIMEOUT', 180)
+    IMAGE_TIMEOUT: int = _int('IMAGE_TIMEOUT', 30)
 
     # worker 并发上限（LibreOffice CPU 密集、Chromium 内存密集，均须限流）
     EXCEL_WORKERS: int = _int('EXCEL_WORKERS', 2)
     HTML_WORKERS: int = _int('HTML_WORKERS', 2)
+    WORD_WORKERS: int = _int('WORD_WORKERS', 2)
+    IMAGE_WORKERS: int = _int('IMAGE_WORKERS', 2)
 
     # URL 下载限制
     DOWNLOAD_TIMEOUT: int = _int('DOWNLOAD_TIMEOUT', 60)

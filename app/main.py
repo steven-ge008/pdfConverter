@@ -1,33 +1,34 @@
-"""Excel / HTML 转 PDF 服务入口。
+"""Excel / Word / 图片 / HTML 转 PDF 服务入口。
 
 接口：
   GET  /healthz                          存活探针（无需鉴权）
   GET  /readyz                           就绪探针（无需鉴权）
-  POST /api/v1/convert/excel             multipart 上传 file，或表单 url
-  POST /api/v1/convert/html              JSON：url 或 html
+  POST /api/v1/convert                   multipart 统一转换入口
   GET  /api/v1/jobs/{job_id}             查询异步任务状态
   GET  /api/v1/jobs/{job_id}/download    下载结果 PDF
 
-转换接口均支持 sync=true 直接返回 PDF 文件流；默认返回 job_id 走异步轮询。
+转换接口支持 sync=true 直接返回 PDF 文件流；默认返回 job_id 走异步轮询。
 """
 import json
 import shutil
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
 
 from . import db
 from .core import html_converter, jobs
 from .core.downloader import DownloadError, download_to_file
 from .core.excel_converter import ConversionError
 from .core.html_converter import HtmlConversionError
+from .core.image_converter import ImageConversionError
 from .core.security import require_api_key
 from .core.settings import settings
 from .core.ssrf import SSRFError
+from .core.word_converter import WordConversionError
 
 
 @asynccontextmanager
@@ -63,19 +64,6 @@ async def readyz():
         'chromium': html_converter._browser is not None,
         'data_dir_writable': settings.DATA_DIR.exists(),
     }
-
-
-# ---------------------------------------------------------------------------
-# 请求模型
-# ---------------------------------------------------------------------------
-
-class HtmlRequest(BaseModel):
-    url: str = Field(default=None, description='待渲染网页地址，与 html 二选一')
-    html: str = Field(default=None, description='HTML 源码字符串，与 url 二选一')
-    sync: bool = Field(default=False, description='true 时直接返回 PDF 文件流')
-    format: str = Field(default='A4', description='纸张：A4/Letter/Legal/A3 等')
-    landscape: bool = False
-    print_background: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -128,93 +116,96 @@ async def _save_upload(upload: UploadFile, dest: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Excel 转换
+# 统一转换入口
 # ---------------------------------------------------------------------------
 
-@app.post('/api/v1/convert/excel', dependencies=[Depends(require_api_key)])
-async def convert_excel_api(
+_EXTENSIONS = {
+    'excel': ('.xlsx', '.xlsm'),
+    'word': ('.docx', '.doc'),
+    'image': ('.jpg', '.jpeg', '.png', '.webp'),
+}
+
+
+@app.post('/api/v1/convert', dependencies=[Depends(require_api_key)])
+async def convert_api(
     background: BackgroundTasks,
+    sourceType: str = Form(default=None),
     file: UploadFile = File(default=None),
     url: str = Form(default=None),
+    html: str = Form(default=None),
     sync: bool = Form(default=False),
     page_config: str = Form(default=None),
+    format: str = Form(default='A4'),
+    landscape: bool = Form(default=False),
+    print_background: bool = Form(default=True),
 ):
-    if (file is None) == (not url):
-        raise HTTPException(400, '请提供上传文件 file 或远程地址 url，且只能二选一')
+    if sourceType not in (*_EXTENSIONS, 'html'):
+        raise HTTPException(400, 'sourceType 必须为 excel / word / image / html')
+
+    if sourceType == 'html':
+        if file is not None:
+            raise HTTPException(400, 'HTML 不支持文件上传，请提供 url 或 html')
+        if bool(url) == bool(html):
+            raise HTTPException(400, 'url 与 html 必须且只能提供其一')
+        payload = {
+            'url': url,
+            'html': html,
+            'format': format,
+            'landscape': landscape,
+            'print_background': print_background,
+        }
+    else:
+        if (file is None) == (not url):
+            raise HTTPException(400, '请提供上传文件 file 或远程地址 url，且只能二选一')
+        filename = file.filename if file is not None else urlsplit(url).path
+        extension = Path(filename or '').suffix.lower()
+        if extension not in _EXTENSIONS[sourceType]:
+            supported = ' / '.join(_EXTENSIONS[sourceType])
+            raise HTTPException(400, f'文件扩展名与 sourceType={sourceType} 不匹配，仅支持 {supported}')
 
     cfg = None
-    if page_config:
+    if sourceType == 'excel' and page_config:
         try:
             cfg = json.loads(page_config)
         except json.JSONDecodeError:
             raise HTTPException(400, 'page_config 必须是合法 JSON')
 
-    # 预建任务目录，同步/异步共用同一套输入落地逻辑
     probe_id = uuid.uuid4().hex
     workdir = jobs.job_dir(probe_id)
     workdir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        if file is not None:
-            if not (file.filename or '').lower().endswith(('.xlsx', '.xlsm')):
-                raise HTTPException(400, '仅支持 .xlsx / .xlsm 文件')
-            src = workdir / 'input.xlsx'
-            await _save_upload(file, src)
-            payload = {'source': 'upload', 'path': str(src), 'page_config': cfg}
-        else:
-            # 同步模式下先下载再转；异步模式下由 worker 下载，快速返回 job_id
-            if sync:
-                src = workdir / 'input.xlsx'
+    if sourceType != 'html':
+        try:
+            if file is not None:
+                filename = 'input.xlsx' if sourceType == 'excel' else f'input{extension}'
+                src = workdir / filename
+                await _save_upload(file, src)
+                payload = {'source': 'upload', 'path': str(src)}
+            elif sync:
+                filename = 'input.xlsx' if sourceType == 'excel' else f'input{extension}'
+                src = workdir / filename
                 await download_to_file(url, src)
-                payload = {'source': 'upload', 'path': str(src), 'page_config': cfg}
+                payload = {'source': 'upload', 'path': str(src)}
             else:
-                payload = {'source': 'url', 'url': url, 'page_config': cfg}
-    except (SSRFError, DownloadError) as exc:
-        shutil.rmtree(workdir, ignore_errors=True)
-        raise HTTPException(400, str(exc))
-    except Exception:
-        # 上传超限、格式不符等失败路径同样要清理预建目录，避免磁盘泄漏
-        shutil.rmtree(workdir, ignore_errors=True)
-        raise
+                payload = {'source': 'url', 'url': url, 'extension': extension}
+            if sourceType == 'excel':
+                payload['page_config'] = cfg
+        except (SSRFError, DownloadError) as exc:
+            shutil.rmtree(workdir, ignore_errors=True)
+            raise HTTPException(400, str(exc))
+        except Exception:
+            shutil.rmtree(workdir, ignore_errors=True)
+            raise
 
-    # 已用 probe_id 建好目录，直接复用该 id 作为任务 id
     if sync:
         try:
-            result = await jobs.run_now('excel', payload, job_id=probe_id)
-        except (ConversionError, DownloadError, SSRFError) as exc:
+            result = await jobs.run_now(sourceType, payload, job_id=probe_id)
+        except (ConversionError, HtmlConversionError, WordConversionError,
+                ImageConversionError, DownloadError, SSRFError) as exc:
             raise HTTPException(422, str(exc))
         return _pdf_response(result['pdf'], probe_id, background)
 
-    job_id = await jobs.submit('excel', payload, job_id=probe_id)
-    return {'job_id': job_id, 'status': 'pending', 'poll_url': f'/api/v1/jobs/{job_id}'}
-
-
-# ---------------------------------------------------------------------------
-# HTML 转换
-# ---------------------------------------------------------------------------
-
-@app.post('/api/v1/convert/html', dependencies=[Depends(require_api_key)])
-async def convert_html_api(req: HtmlRequest, background: BackgroundTasks):
-    if bool(req.url) == bool(req.html):
-        raise HTTPException(400, 'url 与 html 必须且只能提供其一')
-
-    payload = {
-        'url': req.url,
-        'html': req.html,
-        'format': req.format,
-        'landscape': req.landscape,
-        'print_background': req.print_background,
-    }
-    if req.sync:
-        try:
-            result = await jobs.run_now('html', payload)
-        except (HtmlConversionError, SSRFError) as exc:
-            raise HTTPException(422, str(exc))
-        # run_now 生成的临时 id 仅用于目录定位
-        job_id = Path(result['pdf']).parent.name
-        return _pdf_response(result['pdf'], job_id, background)
-
-    job_id = await jobs.submit('html', payload)
+    job_id = await jobs.submit(sourceType, payload, job_id=probe_id)
     return {'job_id': job_id, 'status': 'pending', 'poll_url': f'/api/v1/jobs/{job_id}'}
 
 

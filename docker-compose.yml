@@ -14,8 +14,12 @@ services:
       API_KEYS: ${API_KEYS:-change-me}
       EXCEL_WORKERS: "2"
       HTML_WORKERS: "2"
+      WORD_WORKERS: "2"
+      IMAGE_WORKERS: "2"
       EXCEL_TIMEOUT: "180"
       HTML_TIMEOUT: "90"
+      WORD_TIMEOUT: "180"
+      IMAGE_TIMEOUT: "30"
       JOB_TTL: "86400"
       CJK_FONT: "Noto Sans CJK SC"
     volumes:
