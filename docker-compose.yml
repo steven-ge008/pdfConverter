@@ -4,9 +4,9 @@ services:
   converter:
     build:
       context: ..
-      dockerfile: converter-service/Dockerfile
-    image: converter-service:latest
-    container_name: converter-service
+      dockerfile: pdfConverter/Dockerfile
+    image: pdfConverter:latest
+    container_name: pdfConverter
     ports:
       - "8000:8000"
     environment:
