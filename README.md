@@ -1,4 +1,4 @@
-# pdf-converter
+# pdfConverter
 
 Excel / Word / 图片 / HTML 转 PDF 服务。基于 FastAPI + LibreOffice + Pillow + 无头 Chromium，以 Docker 镜像交付，运行即对外提供 HTTP 接口。
 
@@ -16,10 +16,10 @@ Excel / Word / 图片 / HTML 转 PDF 服务。基于 FastAPI + LibreOffice + Pil
 
 ### 1. 构建镜像
 
-在 `pdf-converter` 目录执行，构建上下文为当前目录；转换内核 `excel2pdf.py` 已包含在该目录中。
+在 `pdfConverter` 目录执行，构建上下文为当前目录；转换内核 `excel2pdf.py` 已包含在该目录中。
 
 ```bash
-cd pdf-converter
+cd pdfConverter
 docker build -t pdf-converter:latest .
 ```
 
