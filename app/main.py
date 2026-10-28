@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
 from . import db
@@ -129,6 +129,7 @@ _EXTENSIONS = {
 @app.post('/api/v1/convert', dependencies=[Depends(require_api_key)])
 async def convert_api(
     background: BackgroundTasks,
+    request: Request,
     sourceType: str = Form(default=None),
     file: UploadFile = File(default=None),
     url: str = Form(default=None),
@@ -139,6 +140,10 @@ async def convert_api(
     landscape: bool = Form(default=False),
     print_background: bool = Form(default=True),
 ):
+    form = await request.form()
+    if len(form.getlist('file')) > 1:
+        raise HTTPException(400, 'file 只能上传一个文件')
+
     if sourceType not in (*_EXTENSIONS, 'html'):
         raise HTTPException(400, 'sourceType 必须为 excel / word / image / html')
 

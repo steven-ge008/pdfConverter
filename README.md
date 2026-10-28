@@ -126,6 +126,7 @@ docker build -f Dockerfile -t pdf-converter:latest \
 转换接口通用规则：
 
 - 请求统一使用 `multipart/form-data`，`sourceType` 必填
+- `file` 字段最多出现一次；重复上传多个文件返回 `400`，不会创建转换任务
 - `sync=true`：同步等待转换完成，直接返回 PDF 文件流（`Content-Type: application/pdf`）
 - `sync=false`（默认）：立即返回 `job_id`，通过轮询 + 下载获取结果
 
@@ -142,7 +143,7 @@ docker build -f Dockerfile -t pdf-converter:latest \
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
 | `sourceType` | string | 是 | - | 源文件类型：`excel` / `word` / `image` / `html` |
-| `file` | File | 与 `url` 二选一 | - | 上传的 Excel 文件，仅支持 `.xlsx` / `.xlsm` |
+| `file` | File | 与 `url` 二选一 | - | 上传的 Excel 文件，仅支持 `.xlsx` / `.xlsm`；最多一个文件 |
 | `url` | string | 与 `file` 二选一 | - | Excel 文件网络地址，仅 http/https，SSRF 校验 |
 | `sync` | boolean | 否 | `false` | `true` 直接返回 PDF 文件流；`false` 返回 `job_id` 走异步 |
 | `page_config` | string(JSON) | 否 | - | 按 sheet 名覆盖分页配置，见下方说明 |
@@ -494,7 +495,7 @@ curl -s "$BASE/api/v1/jobs/$JOB/download" -H "X-API-Key: $KEY" -o result.pdf
 
 | HTTP 状态码 | 场景 |
 | --- | --- |
-| `400` | 参数错误（sourceType 缺失或非法、输入未提供或同时提供、文件扩展名与 sourceType 不符、空文件、page_config 非法 JSON）；Excel/Word/图片 URL 下载失败或 SSRF 拦截 |
+| `400` | 参数错误（sourceType 缺失或非法、输入未提供或同时提供、重复 file 字段、文件扩展名与 sourceType 不符、空文件、page_config 非法 JSON）；Excel/Word/图片 URL 下载失败或 SSRF 拦截 |
 | `401` | API Key 缺失或错误 |
 | `404` | 任务不存在或已过期清理 |
 | `409` | 任务尚未完成就请求下载 |
@@ -518,7 +519,7 @@ curl -s "$BASE/api/v1/jobs/$JOB/download" -H "X-API-Key: $KEY" -o result.pdf
 
 ## 九、验证
 
-镜像构建并启动后，可运行冒烟测试（探针、鉴权、SSRF 负向、统一入口参数校验、HTML/Excel/Word/图片同步与异步全流程；提供全部样本时共 25 项）：
+镜像构建并启动后，可运行冒烟测试（探针、鉴权、SSRF 负向、统一入口参数校验、HTML/Excel/Word/图片同步与异步全流程；提供全部样本时共 26 项）：
 
 ```bash
 BASE=http://localhost:8000 API_KEY=your-secret-key \
